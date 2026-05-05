@@ -33,13 +33,29 @@ h2 <- tags$div(actionButton('findTarget', 'Find'), style = "display:inline-block
 ui <- fluidPage(
   useShinyjs(),
   
+  tags$head(
+    tags$style(HTML("
+      .disclaimer-banner {
+        background-color: #fff5f5;
+        color: #8B0000;
+        border-left: 6px solid #8B0000;
+        padding: 14px 18px;
+        margin-bottom: 20px;
+        border-radius: 6px;
+        font-size: 15px;
+        line-height: 1.45;
+      }
+    "))
+  ),
+
   tags$div(
-    style = "color:#8B0000; font-weight:bold; border:1px solid #8B0000; padding:10px; margin-bottom:15px; border-radius:5px;",
-    "Disclaimer: These predictions are estimates and may not accurately reflect your patient population or individual patient circumstances. ",
-    "This tool is not a substitute for clinical judgment, institutional protocols, or standards of care. ",
+    class = "disclaimer-banner",
+    tags$strong("Clinical Disclaimer: "),
+    "This tool provides estimates only. Predictions may not accurately reflect your patient population or individual patient circumstances. ",
+    "It is not a substitute for independent clinical judgment, institutional protocols, or applicable standards of care. ",
     "All dosing decisions remain the responsibility of the treating clinician. Use at your own risk."
   ),
-  
+
   titlePanel("Therapeutic Drug Monitoring"),
   tabsetPanel(
     tabPanel("Application",
@@ -153,7 +169,22 @@ data2Inputs <- function(dd, myid) {
   inputs
 }
 
-server <- function(input, output) {
+server <- function(input, output, session) {
+	
+	showModal(modalDialog(
+    title = "Clinical Disclaimer",
+    div(
+      style = "color:#8B0000; line-height:1.5;",
+      strong("This tool provides estimates only. "),
+      "Predictions may not accurately reflect your patient population or individual patient circumstances. ",
+      "This tool is not a substitute for independent clinical judgment, institutional protocols, or applicable standards of care. ",
+      "All dosing decisions remain the responsibility of the treating clinician. Use at your own risk."
+    ),
+    easyClose = TRUE,
+    footer = modalButton("I Understand"),
+    size = "m"
+  ))
+
   v <- reactiveValues(dat = NULL, plot1 = NULL, plot2 = NULL, plot3 = NULL, params = NULL, sched = NULL)
 
   formulaText <- reactive({
