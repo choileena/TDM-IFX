@@ -32,6 +32,14 @@ h2 <- tags$div(actionButton('findTarget', 'Find'), style = "display:inline-block
 
 ui <- fluidPage(
   useShinyjs(),
+  
+  tags$div(
+    style = "color:#8B0000; font-weight:bold; border:1px solid #8B0000; padding:10px; margin-bottom:15px; border-radius:5px;",
+    "Disclaimer: These predictions are estimates and may not accurately reflect your patient population or individual patient circumstances. ",
+    "This tool is not a substitute for clinical judgment, institutional protocols, or standards of care. ",
+    "All dosing decisions remain the responsibility of the treating clinician. Use at your own risk."
+  ),
+  
   titlePanel("Therapeutic Drug Monitoring"),
   tabsetPanel(
     tabPanel("Application",
