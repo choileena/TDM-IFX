@@ -51,9 +51,12 @@ ui <- fluidPage(
   tags$div(
     class = "disclaimer-banner",
     tags$strong("Clinical Disclaimer: "),
-    "This tool provides estimates only. Predictions may not accurately reflect your patient population or individual patient circumstances. ",
-    "It is not a substitute for independent clinical judgment, institutional protocols, or applicable standards of care. ",
-    "All dosing decisions remain the responsibility of the treating clinician. Use at your own risk."
+  "This application is intended for research and informational purposes only. ",
+  "Predictions and estimates may not accurately reflect individual patient circumstances, local patient populations, or institutional practices. ",
+  "Model performance may vary across clinical settings and patient populations. ",
+  "This tool is not intended to replace professional clinical judgment, institutional protocols, or medical advice. ",
+  "All clinical and dosing decisions remain the responsibility of the treating clinician. ",
+  "Use of this application is at the user’s own risk."
   ),
 
   titlePanel("Therapeutic Drug Monitoring"),
