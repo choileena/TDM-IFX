@@ -418,7 +418,7 @@ server <- function(input, output, session) {
   makePlots <- function(schedule1, schedule2, schedule3, concdat, tdrupper, tdrlower) {
     cols <- c("Individual" = "blue", 
               "Population" = "darkgoldenrod", 
-              "Simulated" = "black",
+              "Simulated" = "darkgray",
               " Observed Drug Level" = "red")
 
     p1 <- bldplot(schedule1, 'Dosing 1', tdrupper, tdrlower) +
@@ -426,7 +426,7 @@ server <- function(input, output, session) {
       scale_colour_manual(
         values = cols,
         guide = guide_legend(
-          override.aes = list(linetype = c("blank", rep("solid", 3)), shape = c(16, rep(NA, 3)))
+          override.aes = list(linetype = c(rep("solid", 3), "blank"), shape = c(rep(NA, 3), 16))
         )
       ) +
       theme(plot.margin = ggplot2::margin(t=4,r=1,b=1,l=1, "lines")) +
