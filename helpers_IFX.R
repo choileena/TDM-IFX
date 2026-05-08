@@ -57,7 +57,7 @@ getPatDat <- function(clvec=1, v1vec=1, qvec=0, v2vec=1,
   # usriet: infusion end time
   # usrist: infusion start time
   # usridose: infusion dose
-  timevec = seq(0, usrendt, by=1)
+  timevec = seq(0, usrendt + (2*24*7), by=1)
   ltv <- length(timevec)
   pats2 <- vector('list', ltv)
   dur <- usriet - usrist
@@ -135,7 +135,7 @@ mapbayes <- function(eta,
 }
 
 bldplot <- function(dat, title, tdrupper, tdrlower) {
-  mx <- max(dat[,'t'], na.rm = TRUE)
+  mx <- max(dat[,'t'], na.rm = TRUE)  
   xby <- 1 # (24 * 7) # HERE (24 * 7)
   # set y-limit for concentration; exclude 0 as log10(0) = -Inf
   min_conc <- min(dat[dat$concentration > 1e-6, 'concentration'])
@@ -151,7 +151,7 @@ bldplot <- function(dat, title, tdrupper, tdrlower) {
          title = '') + 
     # coord_cartesian(ylim=c(0.01, 100)) + 
     # expand_limits(y=0.1) +
-    guides(group = "none", size = "none")
+    guides(group = "none", size = "none") + xlim(0, 16)
 }
 
 pkprof_est <- function(model_params) {
