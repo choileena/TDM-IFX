@@ -28,7 +28,7 @@ source('helpers_IFX.R')
 
 qweek <- sprintf('Q%sWK', 1:8)
 h1 <- tags$div(textInput('targetTrough', 'Target Trough (mcg/mL)', width = '150px'), style = "display:inline-block")
-h2 <- tags$div(actionButton('findTarget', 'Find'), style = "display:inline-block")
+h2 <- tags$div(tags$div(actionButton('findTarget', 'Find'), style = "display:inline-block"))
 
 ui <- fluidPage(
   useShinyjs(),
@@ -71,6 +71,8 @@ ui <- fluidPage(
                     c("Infliximab" = "infliximab")),
           hr(),
           radioButtons("unit", "Infusion Unit", choices=c("mg/kg", "mg"), selected = 'mg/kg', inline=TRUE),
+         div('Click each tab below and enter the required values. To define the dosing and concentration measurement times, click the time box and use the calendar to select the date. Then, use the slider below to adjust the time. Do not manually enter the date or time.'),
+         hr(),
           tabsetPanel(type="pills",
           tabPanel("Demographics and Labs",
             textInput("wt", "Weight (kg)", value = "70"),
@@ -94,19 +96,25 @@ ui <- fluidPage(
         column(6,
           tags$br(),
           actionButton('runmodel', 'Create Output'),
-          plotOutput("responseplot"),
+          plotOutput("responseplot", height = "600px"),
+          hr(),
+          div('The observed drug levels are shown as red circles, and the blue line represents the individual predicted concentrations based on the patient input data. When no individual patient data are available, the brown line represents the population-predicted concentrations, while the thin gray lines represent simulated individual predicted concentrations.'),
           align = 'center'
         ),
         column(3,
-          h2("Induction Phase"),
+          # h2("Induction Phase"),
+          div(h2("Induction Phase", style = 'margin-bottom: 0'), "(Trough Level)"),
           tableOutput('peaktroughtable'),
           hr(),
           h2("Maintenance Phase"),
+          div('To estimate the trough level during the maintenance dose, enter the Custom Dose (mg/kg) and select the dosing frequency using the radio buttons. The estimated trough level will be displayed below the buttons.'),
           textInput("ud", "Custom Dose (mg/kg)", value = "10", width = "150px"),
           radioButtons("ufrq", "Frequency", choices = qweek, inline = FALSE),
           tableOutput('utable'),
-          div(h1, h2),
-          hr(),
+         div('To determine the appropriate dosing frequency for a specific trough level, enter the desired value in Target Trough.'),
+
+         div(h1, h2),
+           hr(),
           h4("Export Results"),
           downloadButton('downloadPlot', 'Download TDM Plot (PDF)'),
           downloadButton('downloadTable', 'Download Dosing Profile (CSV)'),
