@@ -103,7 +103,7 @@ ui <- fluidPage(
         ),
         column(3,
           # h2("Induction Phase"),
-          div(h2("Induction Phase", style = 'margin-bottom: 0'), "(Trough Level)"),
+          div(h2("Drug Level Prediction", style = 'margin-bottom: 0'), "At Week 2, 6, 14 for each schedule"),
           tableOutput('peaktroughtable'),
           hr(),
           h2("Maintenance Phase"),

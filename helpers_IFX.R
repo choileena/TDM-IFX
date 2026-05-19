@@ -57,7 +57,7 @@ getPatDat <- function(clvec=1, v1vec=1, qvec=0, v2vec=1,
   # usriet: infusion end time
   # usrist: infusion start time
   # usridose: infusion dose
-  timevec = seq(0, usrendt + (2*24*7), by=1)
+  timevec = seq(0, usrendt + (8*24*7), by=1) # HERE predict conc for more weeks (8*24*7),
   ltv <- length(timevec)
   pats2 <- vector('list', ltv)
   dur <- usriet - usrist
@@ -151,7 +151,7 @@ bldplot <- function(dat, title, tdrupper, tdrlower) {
          title = '') + 
     # coord_cartesian(ylim=c(0.01, 100)) + 
     # expand_limits(y=0.1) +
-    guides(group = "none", size = "none") + xlim(0, 16)
+    guides(group = "none", size = "none") + xlim(0, 22) # HERE change the xlim
 }
 
 pkprof_est <- function(model_params) {
