@@ -8,664 +8,608 @@ library(minqa)
 library(MASS)
 library(phonTools)
 library(gridExtra)
-library(deSolve)
-library(cowplot)
-library(plotly)
-library(gapminder)
-library(shinyTime)
-library(tidyverse)
 
-# Load each helpers file into its own environment so internal functions
-# (getpatdat, simulate_*, pkprof_est_*, etc.) don't overwrite each other
+source('helpers_IFX.R')
 
-env_mtx <- new.env(parent = globalenv())
-sys.source('helpers_temp_mtx_v9.R',   envir = env_mtx)
+# infList <- list(
+#   data.frame(dose = 20, dt = as.POSIXct("2022-01-01 00:00:00"), lab = 1, valid = TRUE),
+#   data.frame(dose = 10, dt = as.POSIXct("2022-01-01 00:00:00"), lab = 1, valid = TRUE)
+# )
+# conList <- data.frame(dose = 20, dt = as.POSIXct('2022-01-01 4:30:00'), lab = 1, valid = TRUE)
+# ex_res <- setupModel(infList, conList, 'infliximab', wt=70, alb=4, ada=0)
+#
+# df <- read.csv(stdin())
+# rate,amt,conc,dt,lime,duration
+# 20,20,NA,"2022-01-01 00:00:00",0,1
+# NA,NA,20,"2022-01-01 04:30:00",4.5,NA
+# NA,1,NA,"2022-01-01 10:30:00",10.5,NA
+# 
+# do.call(setupModel, c(arrange_data(df), drug='vancomycinf', wt=2.9, age=10, pma=10, creat=0.4))
 
-env_hui <- new.env(parent = globalenv())
-sys.source('helpers_temp_hui_v8_5.R', envir = env_hui)
+qweek <- sprintf('Q%sWK', 1:8)
+h1 <- tags$div(textInput('targetTrough', 'Target Trough (mcg/mL)', width = '150px'), style = "display:inline-block")
+h2 <- tags$div(tags$div(actionButton('findTarget', 'Find'), style = "display:inline-block"))
 
-# Wrap each setupModel so its entire internal call chain runs in the right environment
-setupModel_mtx <- function(...) {
-  args <- list(...)
-  environment(env_mtx$setupModel) <- env_mtx
-  do.call(env_mtx$setupModel, args)
-}
-setupModel_hui <- function(...) {
-  args <- list(...)
-  environment(env_hui$setupModel) <- env_hui
-  do.call(env_hui$setupModel, args)
-}
-
-makePlots_mtx <- env_mtx$makePlots
-makePlots_hui <- env_hui$makePlots
-
-# ── data2Inputs (shared) ──────────────────────────────────────────────────────
-data2Inputs <- function(dd, myid) {
-  doseLabel <- c('Bolus', 'Infusion', 'Conc')[match(substr(myid, 1, 1), c('b', 'i', 'c'))]
-  nn        <- nrow(dd)
-  adder     <- sprintf('Shiny.onInputChange( \"add_%s_button\" , this.id, {priority: \"event\"})', myid)
-  add_label <- if (doseLabel == 'Conc') 'add conc' else 'add dose'
-  addit     <- actionButton('addit', label = add_label, icon = icon('plus'), onclick = adder,
-                            style = 'padding:4px;font-size:80%;margin-top:4px;')
-  
-  header_cells <- tagList(
-    tags$th(doseLabel,     style = "width:65px;"),
-    tags$th("Date & Time", style = "width:190px;")
-  )
-  if (doseLabel != 'Conc') {
-    header_cells <- tagList(header_cells, tags$th("Dur (Hrs)", style = "width:70px;"))
-  }
-  header_row <- tags$tr(header_cells)
-  
-  data_rows <- lapply(seq_len(nn), function(i) {
-    dt_value   <- as.POSIXct(dd[i, 'dt'], origin = "1970-01-01")
-    dose_input <- textInput(paste0('dose_', myid, '_', i), label = NULL,
-                            value = as.character(dd[i, 'dose']), width = '60px')
-    date_input <- airDatepickerInput(paste0('date_', myid, '_', i), label = NULL,
-                                     timepicker = TRUE, dateFormat = "yyyy-MM-dd",
-                                     timepickerOpts = timepickerOptions(timeFormat = "HH:mm"),
-                                     value = dt_value, width = '180px', readonly = TRUE)
-    cells <- tagList(tags$td(dose_input), tags$td(date_input))
-    if (doseLabel != 'Conc') {
-      dur_input <- textInput(paste0('duration_', myid, '_', i), label = NULL,
-                             value = as.character(dd[i, 'duration']), width = '60px')
-      cells <- tagList(cells, tags$td(dur_input))
-    }
-    tags$tr(cells)
-  })
-  
-  tags$div(
-    tags$table(class = "input-table", header_row, tagList(data_rows)),
-    tags$div(addit)
-  )
-}
-
-# ── UI ────────────────────────────────────────────────────────────────────────
 ui <- fluidPage(
   useShinyjs(),
   
-  tags$head(tags$style(HTML("
-    .disclaimer-banner {
-      background-color: #fff5f5; color: #8B0000;
-      border-left: 6px solid #8B0000; padding: 14px 18px;
-      margin-bottom: 20px; border-radius: 6px;
-      font-size: 15px; line-height: 1.45;
-    }
-    .input-table { border-collapse: separate; border-spacing: 4px 0; }
-    .input-table th { font-weight: normal; font-size: 13px; padding-bottom: 2px; white-space: nowrap; }
-    .input-table td { vertical-align: top; padding-right: 4px; }
-    .app-selector { padding: 10px 0 5px 0; }
-  "))),
-  
-  tags$script(HTML("
-    $(document).on('change', '.air-datepicker-input', function() {
-      $(this).trigger('change');
-    });
-  ")),
-  
+  tags$head(
+    tags$style(HTML("
+      .disclaimer-banner {
+        background-color: #fff5f5;
+        color: #8B0000;
+        border-left: 6px solid #8B0000;
+        padding: 14px 18px;
+        margin-bottom: 20px;
+        border-radius: 6px;
+        font-size: 15px;
+        line-height: 1.45;
+      }
+    "))
+  ),
+
   tags$div(
     class = "disclaimer-banner",
     tags$strong("Clinical Disclaimer: "),
-    "This application is intended for research and informational purposes only. ",
-    "Predictions and estimates may not accurately reflect individual patient circumstances, local patient populations, or institutional practices. ",
-    "Model performance may vary across clinical settings and patient populations. ",
-    "This tool is not intended to replace professional clinical judgment, institutional protocols, or medical advice. ",
-    "All clinical and dosing decisions remain the responsibility of the treating clinician. ",
-    "Use of this application is at the user's own risk."
+  "This application is intended for research and informational purposes only. ",
+  "Predictions and estimates may not accurately reflect individual patient circumstances, local patient populations, or institutional practices. ",
+  "Model performance may vary across clinical settings and patient populations. ",
+  "This tool is not intended to replace professional clinical judgment, institutional protocols, or medical advice. ",
+  "All clinical and dosing decisions remain the responsibility of the treating clinician. ",
+  "Use of this application is at the user’s own risk."
   ),
-  
+
   titlePanel("Therapeutic Drug Monitoring"),
-  
-  # ── App selector dropdown ──
-  fluidRow(
-    column(3,
-           tags$div(class = "app-selector",
-                    selectInput("active_app", label = strong("Select Model:"),
-                                choices = c("Taylor App (Blackman & Taylor)" = "mtx",
-                                            "Hui App (Blackman & Hui)"   = "hui"),
-                                width = "280px")
-           )
-    )
-  ),
-  
   tabsetPanel(
     tabPanel("Application",
-             fluidRow(
-               column(3,
-                      hr(),
-                      fileInput('file1', 'Upload Dosing Profile (CSV)'),
-                      hr(),
-                      helpText(strong("Drug: "), "High-Dose Methotrexate"),
-                      hr(),
-                      tabsetPanel(type = "pills",
-                                  tabPanel("Baseline Information",
-                                           helpText(em("Input baseline patient characteristics.")),
-                                           textInput("bsa", "BSA (m²)", value = "1.97"),
-                                           selectInput("sex", "Sex:", c("Male", "Female")),
-                                           # Hui-only fields (hidden for MTX app)
-                                           conditionalPanel("input.active_app == 'hui'",
-                                                            textInput("height_cm", "Height (cm)", value = "170"),
-                                                            airDatepickerInput("dob", label = "Date of Birth",
-                                                                               value = Sys.Date() - 365 * 10,
-                                                                               maxDate = Sys.Date(),
-                                                                               dateFormat = "yyyy-MM-dd",
-                                                                               width = "180px", readonly = TRUE)
-                                           ),
-                                           fluidRow(
-                                             column(12, textInput("SCR_mgdl1", "Baseline Serum Creatinine (mg/dL)", value = "0.77")),
-                                             column(12, shinyjs::hidden(airDatepickerInput("SCR_time1", label = "Time",
-                                                                                           timepicker = TRUE, readonly = TRUE, dateFormat = "yyyy-MM-dd",
-                                                                                           timepickerOpts = timepickerOptions(timeFormat = "HH:mm"),
-                                                                                           value = Sys.time())))
-                                           )
-                                  ),
-                                  tabPanel("Dosing",
-                                           helpText(em("Provide total amount administered per infusion in mg as well as duration in hours. Leave amount blank to cancel an extra dose.")),
-                                           htmlOutput('inf1')
-                                  ),
-                                  tabPanel("Drug Levels",
-                                           helpText(em("To generate population-level predictions only, leave the drug level amount blank and click 'Create Output'.")),
-                                           htmlOutput('conc')
-                                  ),
-                                  tabPanel("Serum Creatinine Levels Post-infusion",
-                                           helpText(em("Add up to 5 additional measured serum creatinine levels. Be sure to set the time of each observed level.")),
-                                           fluidRow(
-                                             column(12, textInput("SCR_mgdl2", "Serum Creatinine 2 (mg/dL)", value = "0.80")),
-                                             column(12, airDatepickerInput("SCR_date2", label = "Date & Time 2", timepicker = TRUE,
-                                                                           readonly = TRUE, dateFormat = "yyyy-MM-dd",
-                                                                           timepickerOpts = timepickerOptions(timeFormat = "HH:mm"),
-                                                                           value = Sys.time() + 86400, width = "180px"))
-                                           ),
-                                           fluidRow(
-                                             column(12, textInput("SCR_mgdl3", "Serum Creatinine 3 (mg/dL)", value = "")),
-                                             column(12, airDatepickerInput("SCR_date3", label = "Date & Time 3", timepicker = TRUE,
-                                                                           readonly = TRUE, dateFormat = "yyyy-MM-dd",
-                                                                           timepickerOpts = timepickerOptions(timeFormat = "HH:mm"),
-                                                                           value = Sys.time() + 86400, width = "180px"))
-                                           ),
-                                           fluidRow(
-                                             column(12, textInput("SCR_mgdl4", "Serum Creatinine 4 (mg/dL)", value = "")),
-                                             column(12, airDatepickerInput("SCR_date4", label = "Date & Time 4", timepicker = TRUE,
-                                                                           readonly = TRUE, dateFormat = "yyyy-MM-dd",
-                                                                           timepickerOpts = timepickerOptions(timeFormat = "HH:mm"),
-                                                                           value = Sys.time() + 86400, width = "180px"))
-                                           ),
-                                           fluidRow(
-                                             column(12, textInput("SCR_mgdl5", "Serum Creatinine 5 (mg/dL)", value = "")),
-                                             column(12, airDatepickerInput("SCR_date5", label = "Date & Time 5", timepicker = TRUE,
-                                                                           readonly = TRUE, dateFormat = "yyyy-MM-dd",
-                                                                           timepickerOpts = timepickerOptions(timeFormat = "HH:mm"),
-                                                                           value = Sys.time() + 86400, width = "180px"))
-                                           )
-                                  )
-                      )
-               ),
-               column(6,
-                      tags$br(),
-                      actionButton('runmodel', 'Create Output'),
-                      plotlyOutput("responseplot", width = "60vw", height = "70vh"),
-                      align = 'center',
-                      helpText(strong("Recommendation:")),
-                      conditionalPanel("input.active_app == 'mtx'",
-                                       helpText("Follow population prediction line until first observed drug level then follow individual Taylor model prediction line")
-                      ),
-                      conditionalPanel("input.active_app == 'hui'",
-                                       helpText("Follow population prediction line until first observed drug level then follow individual Hui model prediction line")
-                      ),
-                      hr()
-               )
-             )
+      fluidRow(
+        column(3,
+          hr(),
+          fileInput('file1', 'Upload Dosing Profile (CSV)'),
+          hr(),
+          selectInput("drug", "Drug:",
+                    c("Infliximab" = "infliximab")),
+          hr(),
+          radioButtons("unit", "Infusion Unit", choices=c("mg/kg", "mg"), selected = 'mg/kg', inline=TRUE),
+         div('Click each tab below and enter the required values. To define the dosing and concentration measurement times, click the time box and use the calendar to select the date. Then, use the slider below to adjust the time. Do not manually enter the date or time.'),
+         hr(),
+          tabsetPanel(type="pills",
+          tabPanel("Demographics and Labs",
+            textInput("wt", "Weight (kg)", value = "70"),
+            textInput("alb", "Albumin (g/dL)", value = "4"),
+            textInput("ada", "Anti-drug antibody", value = "0")
+          ),
+          tabPanel("Dosing 1",
+            htmlOutput('inf1')
+          ),
+          tabPanel("Dosing 2",
+            htmlOutput('inf2')
+          ),
+          tabPanel("Dosing 3",
+            htmlOutput('inf3')
+          ),
+          tabPanel("Drug Levels",
+            htmlOutput('conc')
+          )
+          )
+        ),
+        column(6,
+          tags$br(),
+          actionButton('runmodel', 'Create Output'),
+          plotOutput("responseplot", height = "600px"),
+          hr(),
+          div('The observed drug levels are shown as red circles, and the blue line represents the individual predicted concentrations based on the patient input data. When no individual patient data are available, the brown line represents the population-predicted concentrations, while the thin gray lines represent simulated individual predicted concentrations.'),
+          align = 'center'
+        ),
+        column(3,
+          # h2("Induction Phase"),
+          div(h2("Drug Level Prediction", style = 'margin-bottom: 0'), "At Week 2, 6, 14 for each schedule"),
+          tableOutput('peaktroughtable'),
+          hr(),
+          h2("Maintenance Phase"),
+          div('To estimate the trough level during the maintenance dose, enter the Custom Dose (mg/kg) and select the dosing frequency using the radio buttons. The estimated trough level will be displayed below the buttons.'),
+          textInput("ud", "Custom Dose (mg/kg)", value = "10", width = "150px"),
+          radioButtons("ufrq", "Frequency", choices = qweek, inline = FALSE),
+          tableOutput('utable'),
+         div('To determine the appropriate dosing frequency for a specific trough level, enter the desired value in Target Trough.'),
+
+         div(h1, h2),
+           hr(),
+          h4("Export Results"),
+          downloadButton('downloadPlot', 'Download TDM Plot (PDF)'),
+          downloadButton('downloadTable', 'Download Dosing Profile (CSV)'),
+          style='margin-bottom:30px;leftborder:1px solid; padding: 10px;font-size:0.8em'
+        )
+      )
     ),
     tabPanel("Documentation",
              h1("Functionality"),
-             p("This application takes as input patient characteristics/dosing schedule and presents the patient's predicted concentration-time curve. The concentration predictions are
-             based on the solutions to the standard three-compartment pharmacometric (PK) ordinary differential equations. The predictions include population-level estimates and 
-        will also include individual-level expected response when an observed blood level draw is available. The individual-level estimates are rendered with empirical Bayesian estimates (EBEs),
-        so they require the observed blood level draw for estimation. The Bayesian process is based on the minimization of the likelihood with respect to the individual
-        random effects [1]. The Taylor App uses Blackman et al. [2] and Taylor et al. [3] models; the Hui App uses Blackman et al. and Hui et al. [4] models."),
+             p("This application takes as input patient characteristics/dosing schedule and presents both the population expected drug concentrations
+               as well as a simulated set of drug concentrations that represent randomly generated individuals according to a model-estimated 
+               random effects distribution.  These simulated responses give some intuition to how individuals can be expected to 
+               deviate.  Additionally, if drug concentrations have been observed, we can use that information to calculate the empirical Bayes 
+               estimate (EBE) for the random effects and plot the individual expected drug concentrations in order to aid therapeutic drug monitoring (TDM).  Further, we can specify two alternative dosing schedules and see population, simulated, and individual expected drug concentrations to those schedules."),
              h1("Resources"),
-             HTML("<p>The models implemented in this application are all available in the scientific literature and cited below.
-           The calculation of the EBEs for individual random effects is outlined in
-           <a href='https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3339294/'>Kang 2012</a> [1]
-           and the code to calculate the EBEs is adapted from the open source TDM software
-           <a href='https://mrgsolve.org/'>mrgsolve</a>.
-           </p>"),
+             HTML("<p>The models implemented in this application are all available in the scientific literature.
+                  The infliximab model is published in
+                  <a href='https://pubmed.ncbi.nlm.nih.gov/27739008/'>Dubinsky 2017</a> [1].  
+                  The code to calculate the EBEs is adapted from the open source TDM software 
+                  <a href='https://mrgsolve.org/'>mrgsolve</a>.
+                  </p>"),
              h1("Bibliography"),
              tags$ol(
-               tags$li("Kang, D., Bae, K.-S., Houk, B. E., Savic, R. M. & Karlsson, M. O. Standard Error of Empirical Bayes Estimate in NONMEM® VI. Korean J Physiol Pharmacol (2012)."),
-               tags$li("Blackman et al. Development and Validation of High-Dose Methotrexate Population Pharmacokinetic Models to Inform Clinical Decisions on Dosing, European Journal of Clinical Pharmacology (2026)."),
-               tags$li("Taylor et al. MTXPK.org: A Clinical Decision Support Tool Evaluating High-Dose Methotrexate Pharmacokinetics to Inform Post-Infusion Care and Use of Glucarpidase, Clinical Pharmacology and Pharmacometrics (2020)."),
-               tags$li("Hui et al. Population Pharmacokinetic Study and Individual Dose Adjustments of High-Dose Methotrexate in Chinese Pediatric Patients With Acute Lymphoblastic Leukemia or Osteosarcoma, The Journal of Clinical Pharmacology (2018).")
+               tags$li("Dubinsky MC, Phan BL, Singh N, Rabizadeh S, Mould DR. Pharmacokinetic Dashboard-Recommended Dosing Is Different than Standard of Care Dosing in Infliximab-Treated Pediatric IBD Patients. AAPS J. 2017 Jan;19(1):215-222. doi: 10.1208/s12248-016-9994-y."), 
+               tags$li("Xu Z, Mould DR, Hu C, Ford J, Keen M, Davis HM, et al. A population-based pharmacokinetic pooled analysis of infliximab in pediatrics. ACCP National Meeting 2012 San Diego CA")
              )
     ),
     tabPanel("View Profile",
-             DT::dataTableOutput('profile1'),
-             downloadButton('downloadTable1', 'Download Data (CSV)')
-    ),
-    tabPanel("Predictions",
-             DT::dataTableOutput('profile2'),
-             downloadButton('downloadTable2', 'Download Data (CSV)')
+      DT::dataTableOutput('profile1'),
+      downloadButton('downloadTable1', 'Download Data (CSV)')
     )
   )
 )
 
-# ── Server ────────────────────────────────────────────────────────────────────
+data2Inputs <- function(dd, myid) {
+  doseLabel <- c('Bolus','Infusion','Conc')[match(substr(myid, 1, 1), c('b','i','c'))]
+  nn <- nrow(dd)
+  myclick <- sprintf('Shiny.onInputChange( \"delete_%s_button\" , this.id, {priority: \"event\"})', myid)
+  divstyle <- "display:inline-block;vertical-align:top;height:40px"
+  inputs <- vector('list', nn + 2)
+#   ids <- paste0('delete_', dd[,'lab'])
+
+  for(i in seq_len(nn)) {
+    dose <- textInput(paste0('dose_', myid, '_', i), label = NULL, value = dd[i,'dose'], width = '60px')
+    suppressMessages(
+      dt <- shinyWidgets::airDatepickerInput(paste0('dt_', myid, '_', i), label = NULL, value = dd[i,'dt'], timepickerOpts = list(timeFormat = 'HH:mm'),
+                                             timepicker = TRUE, width = '180px', update_on = 'close'
+      )
+    )
+#     ab <- actionButton(ids[i], label = NULL, icon = icon('trash'), onclick = myclick)
+#     inputs[[i + 1]] <- tags$div(tags$div(dose, style = divstyle), tags$div(dt, style = divstyle), tags$div(ab, style = divstyle))
+    inputs[[i + 1]] <- tags$div(tags$div(dose, style = divstyle), tags$div(dt, style = divstyle))
+  }
+  adder <- sprintf('Shiny.onInputChange( \"add_%s_button\" , this.id, {priority: \"event\"})', myid)
+  add_label <- 'add dose'
+  if(doseLabel == 'Conc') add_label <- 'add conc'
+  addit <- actionButton('addit', label = add_label, icon = icon('plus'), onclick = adder, style = 'padding:4px;font-size:80%')
+  h1 <- tags$div(doseLabel, style = "display:inline-block;vertical-align:top;width:60px")
+  h2 <- tags$div('Time', style = "display:inline-block;vertical-align:top;width:180px")
+  #   h3 <- tags$div(actionButton('addit', label = 'add', icon = icon('plus'), onclick = adder, style = 'padding:2px;font-size:80%'), style = "display:inline-block;vertical-align:top")
+  inputs[[1]] <- tags$div(h1, h2)
+  inputs[[nn + 2]] <- tags$div(addit)
+  inputs
+}
+
 server <- function(input, output, session) {
-  
-  showModal(modalDialog(
+	
+	showModal(modalDialog(
     title = "Clinical Disclaimer",
-    div(style = "color:#8B0000; line-height:1.5;",
-        strong("This tool provides estimates only. "),
-        "Predictions may not accurately reflect your patient population or individual patient circumstances. ",
-        "This tool is not a substitute for independent clinical judgment, institutional protocols, or applicable standards of care. ",
-        "All dosing decisions remain the responsibility of the treating clinician. Use at your own risk."
+    div(
+      style = "color:#8B0000; line-height:1.5;",
+      strong("This tool provides estimates only. "),
+      "Predictions may not accurately reflect your patient population or individual patient circumstances. ",
+      "This tool is not a substitute for independent clinical judgment, institutional protocols, or applicable standards of care. ",
+      "All dosing decisions remain the responsibility of the treating clinician. Use at your own risk."
     ),
-    easyClose = TRUE, footer = modalButton("I Understand"), size = "m"
+    easyClose = TRUE,
+    footer = modalButton("I Understand"),
+    size = "m"
   ))
-  
-  v      <- reactiveValues(dat = NULL, params = NULL, sched = NULL)
-  PKprof <- reactiveValues(p = NULL, Omega = NULL, unit = 'mg')
-  
+
+  v <- reactiveValues(dat = NULL, plot1 = NULL, plot2 = NULL, plot3 = NULL, params = NULL, sched = NULL)
+
+  formulaText <- reactive({
+    paste(input$drug)
+  })
+
+  # Return the formula text for printing as a caption ----
+  output$caption <- renderText({
+    formulaText()
+  })
+
   observeEvent(input$file1, {
-    if (!is.null(input$file1)) {
+    if(!is.null(input$file1)) {
       inFile <- input$file1
-      if (!is.null(inFile) && inFile$type %in% c('text/csv', 'text/comma-separated-values', 'text/plain'))
+      if(!is.null(inFile) && inFile$type %in% c('text/csv', 'text/comma-separated-values', 'text/plain')) {
         v$dat <- read.csv(inFile$datapath)
-      else
+      } else {
         v$dat <- NULL
+      }
     }
   })
-  
-  def_time1 <- Sys.time()
-  
+  PKprof <- reactiveValues(p = NULL, Omega = NULL, wt = NULL, unit = 'mg/kg')
+  observe({
+    toggleElement(id = "wt", condition = is.null(v$dat$Weight))
+    toggleElement(id = "downloadTable", condition = is.null(input$file1))
+    toggleElement(id = "downloadPlot", condition = !is.null(v$params))
+    toggleElement(id = "vp", condition = !is.null(v$params))
+  })
+
+  ####################    ####################    ####################    ####################    ####################    ####################
+  def_time1 <- as.POSIXct("2022-01-01")
+  def_time1 <- as.POSIXct(format(Sys.time(), "%Y-%m-%d"))
+  # def_inf_seq <- seq(def_time1, length.out=2, by= 3600*24*7*2) # HERE test with magnifying
+  # def_inf_seq1 <- def_inf_seq[c(1, 2)] # HERE test with magnifying
+  def_inf_seq <- seq(def_time1, length.out=20, by= 3600*24*7*2 ) # HERE 3600*24*7*2: every 2 weeks ; 3600*12: 12 hour increments
+  def_inf_seq1 <- def_inf_seq[c(1, 2, 4, 8)] # HERE 3600*24*7*2: every 2 weeks ; 3600*12: 12 hour increments
+
+  def_inf_seq2 <- def_inf_seq[c(1, 3, 5, 7)]
+  def_inf_seq3 <- def_inf_seq[c(1, 5, 9, 13)]
+
   values <- reactiveValues(
-    infusion1dat = data.frame(dose = 2330, dt = def_time1,         lab = 1, duration = 24, valid = TRUE),
-    concdat      = data.frame(dose = 20,   dt = def_time1 + 86400, lab = 1,               valid = TRUE),
+    infusion1dat = data.frame(dose = rep(5,4), dt = def_inf_seq1, lab = seq(4), valid = TRUE), # HERE change default
+    # infusion2dat = data.frame(dose = rep(10,4), dt = def_inf_seq2, lab = seq(4), valid = TRUE),
+    # infusion3dat = data.frame(dose = rep(10,4), dt = def_inf_seq3, lab = seq(4), valid = TRUE),
+    infusion2dat = data.frame(dose = rep(7.5,4), dt = def_inf_seq1, lab = seq(4), valid = TRUE),
+    infusion3dat = data.frame(dose = rep(10,4), dt = def_inf_seq1, lab = seq(4), valid = TRUE),
+
+    concdat = data.frame(dose = 15, dt = def_time1 + 3600*(24*7*2 - 1), lab = 1, valid = TRUE), # HERE; 1 hr before next dose for obs. conc time
     init = FALSE
   )
-  
-  # ── Factories ──────────────────────────────────────────────────────────────
+
   factory_add <- function(dat, myid) {
     button <- sprintf('add_%s_button', myid)
     observeEvent(input[[button]], {
-      if (!values$init) return()
-      ix <- which(values[[dat]][, 'valid'])
-      if (length(ix) == 0) {
+      if(!values$init) return()
+      ix <- which(values[[dat]][,'valid'])
+      if(is.na(ix[1])) {
         next_time <- as.POSIXct(format(Sys.time(), "%Y-%m-%d %H:00"))
-        new_duration <- 24
       } else {
-        first_time   <- as.POSIXct(values[[dat]][1, 'dt'])
-        first_dur    <- as.numeric(values[[dat]][1, 'duration'])
-        next_time    <- first_time + first_dur * 3600
-        new_duration <- max(0, 24 - first_dur)
+        next_time <- as.POSIXct(format(max(values[[dat]][ix,'dt']), "%Y-%m-%d %H:00")) + 3600 * 12
       }
-      values[[dat]] <- rbind(values[[dat]],
-                             data.frame(dose = NA, dt = next_time, lab = nrow(values[[dat]]) + 1,
-                                        duration = new_duration, valid = TRUE))
+      values[[dat]] <- rbind(values[[dat]], data.frame(dose = 0, dt = next_time, lab = nrow(values[[dat]]) + 1, valid = TRUE))
     })
   }
-  
-  factory_addconc <- function(dat, myid) {
-    button <- sprintf('add_%s_button', myid)
-    observeEvent(input[[button]], {
-      if (!values$init) return()
-      ix <- which(values[[dat]][, 'valid'])
-      next_time <- if (length(ix) == 0)
-        as.POSIXct(format(Sys.time(), "%Y-%m-%d %H:00"))
-      else
-        as.POSIXct(format(max(values[[dat]][ix, 'dt']), "%Y-%m-%d %H:00")) + 3600 * 12
-      values[[dat]] <- rbind(values[[dat]],
-                             data.frame(dose = NA, dt = next_time, lab = nrow(values[[dat]]) + 1, valid = TRUE))
-    })
+  factory_del <- function(dat, myid) {
+#     button <- sprintf('delete_%s_button', myid)
+#     observeEvent(input[[button]], {
+#       if(!values$init) return()
+#       selectedId <- as.numeric(strsplit(input[[button]], "_")[[1]][2])
+#       selectedRow <- match(selectedId, values[[dat]][,'lab'])
+#       values[[dat]][selectedRow, 'valid'] <- FALSE
+#     })
   }
-  
   factory_dose <- function(dat, myid) {
     doseid <- sprintf('dose_%s_', myid)
-    observeEvent({
-      jj <- nrow(values[[dat]])
-      lapply(paste0(doseid, seq(jj)), function(i) input[[i]])
-    }, {
-      if (!values$init) return()
-      labix     <- values[[dat]][, 'lab']
-      curr_dose <- values[[dat]][, 'dose']
+    observeEvent({jj <- nrow(values[[dat]]); lapply(paste0(doseid, seq(jj)), function(i) input[[i]])}, {
+      if(!values$init) return()
+      labix <- values[[dat]][,'lab']
+      curr_dose <- values[[dat]][,'dose']
       dose_vals <- character(length(labix))
-      for (i in seq_along(dose_vals)) {
+      for(i in seq_along(dose_vals)) {
         tmp <- input[[paste0(doseid, i)]]
-        if (is.null(tmp)) tmp <- NA
+        if(is.null(tmp)) tmp <- NA
         dose_vals[i] <- tmp
       }
-      curr_dose[match(seq_along(labix), labix)] <- as.numeric(dose_vals)
-      values[[dat]][, 'dose'] <- curr_dose
+      dose_ins_row <- match(seq_along(labix), labix)
+      curr_dose[dose_ins_row] <- as.numeric(dose_vals)
+      values[[dat]][,'dose'] <- curr_dose
     })
   }
-  
   factory_time <- function(dat, myid) {
-    observe({
-      if (!values$init) return()
-      labix   <- values[[dat]][, 'lab']
-      curr_dt <- values[[dat]][, 'dt']
-      changed <- FALSE
-      for (i in seq_along(labix)) {
-        dt_val <- input[[paste0('date_', myid, '_', i)]]
-        if (is.null(dt_val)) next
-        new_dt <- tryCatch(as.POSIXct(dt_val), error = function(e) NULL)
-        if (is.null(new_dt) || is.na(new_dt)) next
-        row <- match(i, labix)
-        if (!is.na(row) && !identical(curr_dt[row], new_dt)) {
-          curr_dt[row] <- new_dt
-          changed <- TRUE
-        }
+    timeid <- sprintf('dt_%s_', myid)
+    observeEvent({jj <- nrow(values[[dat]]); lapply(paste0(timeid, seq(jj)), function(i) input[[i]])}, {
+      if(!values$init) return()
+      labix <- values[[dat]][,'lab']
+      curr_time <- unclass(values[[dat]][,'dt'])
+      time_vals <- vector('list', length(labix))
+      for(i in seq_along(time_vals)) {
+        tmp <- input[[paste0(timeid, i)]]
+        if(is.null(tmp)) tmp <- NA
+        time_vals[[i]] <- tmp
       }
-      if (changed) values[[dat]][, 'dt'] <- curr_dt
+      time_ins_row <- match(seq_along(labix), labix)
+      curr_time[time_ins_row] <- unlist(time_vals)
+      curr_time <- as.POSIXct(curr_time, origin = '1970-01-01 00:00:00')
+      values[[dat]][,'dt'] <- curr_time
     })
   }
-  
-  factory_duration <- function(dat, myid) {
-    durationid <- sprintf('duration_%s_', myid)
-    observeEvent({
-      jj <- nrow(values[[dat]])
-      lapply(paste0(durationid, seq(jj)), function(i) input[[i]])
-    }, {
-      if (!values$init) return()
-      labix    <- values[[dat]][, 'lab']
-      curr_dur <- values[[dat]][, 'duration']
-      dur_vals <- character(length(labix))
-      for (i in seq_along(dur_vals)) {
-        tmp <- input[[paste0(durationid, i)]]
-        if (is.null(tmp)) tmp <- NA
-        dur_vals[i] <- tmp
-      }
-      curr_dur[match(seq_along(labix), labix)] <- as.numeric(dur_vals)
-      values[[dat]][, 'duration'] <- curr_dur
-    })
-  }
-  
   factory_ui <- function(dat, myid) {
     button1 <- sprintf('add_%s_button', myid)
+#     button2 <- sprintf('delete_%s_button', myid)
     renderUI({
-      if (!values$init) values$init <- TRUE
+      if(!values$init) values$init <- TRUE
+      ix <- isolate(c(TRUE, values[[dat]][,'valid'], TRUE))
+      xx <- isolate(data2Inputs(values[[dat]], myid))
+      # only add/delete should re-render
       input[[button1]]
-      isolate(data2Inputs(values[[dat]][values[[dat]][, 'valid'], ], myid))
+#       input[[button2]]
+      if(!is.null(xx)) do.call(tags$div, xx[ix])
     })
   }
-  
+
   factory_add('infusion1dat', 'i1')
+  factory_del('infusion1dat', 'i1')
   factory_dose('infusion1dat', 'i1')
   factory_time('infusion1dat', 'i1')
-  factory_duration('infusion1dat', 'i1')
-  
-  factory_addconc('concdat', 'c')
+  factory_add('infusion2dat', 'i2')
+  factory_del('infusion2dat', 'i2')
+  factory_dose('infusion2dat', 'i2')
+  factory_time('infusion2dat', 'i2')
+  factory_add('infusion3dat', 'i3')
+  factory_del('infusion3dat', 'i3')
+  factory_dose('infusion3dat', 'i3')
+  factory_time('infusion3dat', 'i3')
+  factory_add('concdat', 'c')
+  factory_del('concdat', 'c')
   factory_dose('concdat', 'c')
   factory_time('concdat', 'c')
-  
+
   output$inf1 <- factory_ui('infusion1dat', 'i1')
+  output$inf2 <- factory_ui('infusion2dat', 'i2')
+  output$inf3 <- factory_ui('infusion3dat', 'i3')
   output$conc <- factory_ui('concdat', 'c')
-  
-  # ── Shared SCR/input helpers ───────────────────────────────────────────────
-  get_scr_vals <- function() {
-    sapply(1:5, function(i) {
-      x <- input[[paste0("SCR_mgdl", i)]]
-      if (is.null(x) || x == "") NA_real_ else as.numeric(x)
-    })
-  }
-  
-  get_scr_times <- function() {
-    c(
-      {
-        dose_dt <- values$infusion1dat[values$infusion1dat[, 'valid'], 'dt']
-        if (length(dose_dt) == 0 || is.na(dose_dt[1])) as.numeric(Sys.time())
-        else as.numeric(as.POSIXct(dose_dt[1]))
-      },
-      sapply(2:5, function(i) {
-        dt_val <- input[[paste0("SCR_date", i)]]
-        if (is.null(dt_val)) return(NA_real_)
-        as.numeric(as.POSIXct(dt_val))
-      })
-    )
-  }
-  
-  get_common_inputs <- function(env) {
-    def_start    <- Sys.time()
-    def_inf      <- data.frame(dose = 2330, duration = 24, dt = def_start)
-    def_con      <- data.frame(dose = 20,   dt = def_start + 86400)
-    in_infusmat1 <- env$checkInputMatrix(
-      values$infusion1dat[values$infusion1dat[, 'valid'], c("dose", "duration", "dt")],
-      def_inf, 24)
-    raw_concdat  <- values$concdat[values$concdat[, 'valid'], ]
-    has_conc     <- nrow(raw_concdat) > 0 &&
-      any(!is.na(suppressWarnings(as.numeric(raw_concdat$dose))) &
-            suppressWarnings(as.numeric(raw_concdat$dose)) > 0)
-    in_concmat   <- env$checkInputMatrix(raw_concdat[, c("dose", "dt")], def_con)
-    bsa          <- as.numeric(input$bsa)
-    if (is.na(bsa) || bsa < 0) { bsa <- 1.97; updateTextInput(session, "bsa", value = bsa) }
-    pt_gender    <- input$sex
-    scr_vals     <- get_scr_vals()
-    if (is.na(scr_vals[1]) || scr_vals[1] < 0) {
-      scr_vals[1] <- 68.08 / 88.4
-      updateTextInput(session, "SCR_mgdl1", value = scr_vals[1])
-    }
-    scr_times <- get_scr_times()
-    list(in_infusmat1 = in_infusmat1, in_concmat = in_concmat, has_conc = has_conc,
-         bsa = bsa, pt_gender = pt_gender, scr_vals = scr_vals, scr_times = scr_times)
-  }
-  
-  # ── Plotly post-processing (shared) ───────────────────────────────────────
-  style_plotly <- function(gp, app_type) {
-    second_model_label <- if (app_type == "mtx") "Taylor model" else "Hui model"
-    second_model_regex <- if (app_type == "mtx") "Taylor model"  else "Hui model"
-    
-    for (i in seq_along(gp$x$data)) {
-      if (!is.null(gp$x$data[[i]]$name) && grepl("Serum Creatinine", gp$x$data[[i]]$name))
-        gp$x$data[[i]]$yaxis <- "y2"
-    }
-    
-    for (i in seq_along(gp$x$data)) {
-      raw_name <- gp$x$data[[i]]$name
-      if (is.null(raw_name)) { gp$x$data[[i]]$showlegend <- FALSE; next }
-      clean_name <- gsub("^\\(|\\,1\\)$", "", raw_name)
-      clean_name <- gsub("Blackman et al\\.", "Blackman model", clean_name)
-      clean_name <- gsub("MTXPK\\.org",      "Taylor model",   clean_name)
-      clean_name <- gsub("Hui et al\\.",      "Hui model",      clean_name)
-      
-      if (clean_name == " ") {
-        gp$x$data[[i]]$name           <- " "
-        gp$x$data[[i]]$showlegend     <- TRUE
-        gp$x$data[[i]]$visible        <- TRUE
-        gp$x$data[[i]]$marker$opacity <- 0
-        gp$x$data[[i]]$hoverinfo      <- "none"
-        next
-      }
-      if (clean_name == "" || grepl("Trace", clean_name) || grepl("df_ribbon", clean_name)) {
-        gp$x$data[[i]]$showlegend <- FALSE
-      } else {
-        gp$x$data[[i]]$name       <- clean_name
-        gp$x$data[[i]]$showlegend <- TRUE
-        is_point <- clean_name %in% c("Observed Drug Level", "Serum Creatinine (mg/dL)", "Glucarpidase Consensus Guidelines")
-        if (is_point) {
-          gp$x$data[[i]]$mode       <- "markers"
-          gp$x$data[[i]]$line$width <- 0
-        } else {
-          gp$x$data[[i]]$mode <- "lines"
-          if (grepl(second_model_regex, clean_name)) {
-            gp$x$data[[i]]$line$dash  <- "dash"
-            gp$x$data[[i]]$line$width <- 1.5
-          } else {
-            gp$x$data[[i]]$line$dash <- "solid"
-          }
-          if (grepl("Blackman model", clean_name))
-            gp$x$data[[i]]$line$width <- if (!grepl("probability", clean_name)) 2.5 else 1
-          else
-            gp$x$data[[i]]$line$width <- 1.5
-        }
-        if (grepl("Serum Creatinine", clean_name)) gp$x$data[[i]]$yaxis <- "y2"
-        gp$x$data[[i]]$legendgroup <- clean_name
-      }
-    }
-    gp
-  }
-  
-  apply_layout <- function(gp, tick_positions, plot_range, level_order) {
-    trace_names   <- sapply(gp$x$data, function(x) x$name)
-    order_indices <- match(level_order, trace_names)
-    order_indices <- order_indices[!is.na(order_indices)]
-    other_indices <- setdiff(seq_along(gp$x$data), order_indices)
-    gp$x$data     <- gp$x$data[c(order_indices, other_indices)]
-    
-    gp %>% layout(
-      legend  = list(orientation = "h", x = 0.5, xanchor = "center", y = -0.2, traceorder = "normal"),
-      margin  = list(r = 80),
-      yaxis   = list(range = plot_range, tickmode = "auto", ticks = "outside",
-                     ticklen = 5, tickwidth = 1, tickcolor = "black"),
-      yaxis2  = list(overlaying = "y", side = "right", range = plot_range,
-                     tickvals = tick_positions, ticktext = round(tick_positions / 30, 2),
-                     title = list(text = "Serum Creatinine (mg/L)", font = list(size = 14), color = "purple"),
-                     tickfont = list(size = 12, color = "purple"),
-                     ticks = "outside", ticklen = 5, tickwidth = 1, tickcolor = "black")
-    )
-  }
-  
-  # ── Run model ──────────────────────────────────────────────────────────────
+  ####################    ####################    ####################    ####################    ####################
+
+#   observe({
   observeEvent(input$runmodel, {
-    showModal(modalDialog(title = NULL, "Calculating, please wait...",
-                          footer = NULL, easyClose = FALSE))
-    
-    #ci <- get_common_inputs()
-    app_type <- input$active_app
-    ci <- get_common_inputs(if (app_type == "mtx") env_mtx else env_hui)
-    if (app_type == "mtx") {
-      myparams <- c(ci, list(drug = input$drug))
-      stuff    <- do.call(setupModel_mtx, myparams)
-    } else {
-      height_cm <- as.numeric(input$height_cm)
-      if (is.na(height_cm) || height_cm < 0) { height_cm <- 170; updateTextInput(session, "height_cm", value = 170) }
-      myparams <- c(ci, list(drug = input$drug, height_cm = height_cm, dob = input$dob))
-      stuff    <- do.call(setupModel_hui, myparams)
+    def_start <- as.POSIXct("2022-01-01 00:00:00")
+    def_inf <- data.frame(dose = 10, duration = 2, dt = def_start)
+    def_con <- data.frame(dose = 10, dt = def_start + 16200) # 4.5 hours
+    inf_duration <- 2  # HERE infusion duration: default 2 hours
+    in_infusmat1 <- checkInputMatrix(values$infusion1dat[values$infusion1dat[,'valid'],c("dose","dt")], def_inf, inf_duration)
+    in_infusmat2 <- checkInputMatrix(values$infusion2dat[values$infusion2dat[,'valid'],c("dose","dt")], def_inf, inf_duration)
+    in_infusmat3 <- checkInputMatrix(values$infusion3dat[values$infusion3dat[,'valid'],c("dose","dt")], def_inf, inf_duration)
+    in_concmat <- checkInputMatrix(values$concdat[values$concdat[,'valid'],c("dose","dt")], def_con)
+
+    #repair broken inputs
+    usrwt <- as.numeric(input$wt)
+    usralb <- as.numeric(input$alb)
+    usrada <- as.numeric(input$ada)
+    negNA <- function(x) is.na(x) || x < 0
+    if(negNA(usrwt)) {
+      usrwt <- 70
+      updateTextInput(getDefaultReactiveDomain(), inputId = "wt", value = usrwt)
     }
-    
-    v$params <- c(myparams, list(app_type = app_type))
-    v$sched  <- list(stuff[[1]], stuff[[2]])
-    PKprof$Omega <- stuff[[3]]$Omega
-    PKprof$p     <- stuff[[3]]
-    
-    removeModal()
-    
-    output$responseplot <- renderPlotly({
-      df      <- stuff[[2]]
-      concdat <- stuff[[1]]
-      make_fn <- if (app_type == "mtx") makePlots_mtx else makePlots_hui
-      p       <- make_fn(stuff[[2]], stuff[[1]])
-      gp      <- ggplotly(p)
-      
-      con1  <- as.numeric(unlist(df[, 'Conc']))
-      con2  <- c(50, 30, 10, 5) * 0.454
-      con3  <- if (nrow(concdat) > 0) concdat[, 'y'] else numeric(0)
-      con4  <- as.numeric(unlist(df[, 'SCR_mmol'])) / 88.4
-      myvec <- c(con1, con2, unlist(con3), con4)
-      myvec <- myvec[is.finite(myvec)]
-      y_range        <- c(-0.5, max(myvec) + 2)
-      ceiling_val    <- 5 * round(y_range[2] / 5)
-      tick_positions <- if (ceiling_val >= 30) seq(0, ceiling_val, by = 10) else seq(0, ceiling_val, by = 5)
-      plot_range     <- c(-0.5, y_range[2] * 1.05)
-      
-      gp <- style_plotly(gp, app_type)
-      
-      if (app_type == "mtx") {
-        level_order <- c("Observed Drug Level", " ", "Serum Creatinine (mg/L)",
-                         "Glucarpidase Consensus Guidelines",
-                         "Population level: Blackman model", "Individual level: Blackman model",
-                         "Population level: Taylor model",   "Individual level: Taylor model",
-                         "Upper 95% population probability: Blackman model",
-                         "Lower 95% population probability: Blackman model")
-      } else {
-        level_order <- c("Observed Drug Level", " ", "Serum Creatinine (mg/L)",
-                         "Glucarpidase Consensus Guidelines",
-                         "Population level: Blackman model", "Individual level: Blackman model",
-                         "Population level: Hui model",      "Individual level: Hui model",
-                         "Upper 95% population probability: Blackman model",
-                         "Lower 95% population probability: Blackman model")
-      }
-      
-      apply_layout(gp, tick_positions, plot_range, level_order)
-    })
+    if(negNA(usralb)) {
+      usrcreat <- 4
+      updateTextInput(getDefaultReactiveDomain(), inputId = "alb", value = usralb)
+    }
+    if(negNA(usrada)) {
+      usrada <- 0
+      updateTextInput(getDefaultReactiveDomain(), inputId = "ada", value = usrada)
+    }
+    if(input$unit == 'mg') {
+      # Infusion Unit: convert dose from "mg" to "mg/kg"
+      in_infusmat1$dose <- in_infusmat1$dose / usrwt
+      in_infusmat2$dose <- in_infusmat2$dose / usrwt
+      in_infusmat3$dose <- in_infusmat3$dose / usrwt
+    }
+
+    ldat <- list(
+      infList = list(in_infusmat1, in_infusmat2, in_infusmat3),
+      conList = list(in_concmat)
+    )
+
+    myparams <- c(ldat, drug=input$drug, wt=usrwt, alb=usralb, ada=usrada)
+    v$params <- myparams
+    stuff <- do.call(setupModel, myparams)
+    v$sched <- list(stuff[[1]][[1]], stuff[[1]][[2]], stuff[[1]][[3]])
+    PKprof$Omega <- stuff[[5]]$Omega
+    PKprof$p <- stuff[[5]]$p
+    PKprof$wt <- stuff[[5]]$wt
+    makePlots(stuff[[1]][[1]], stuff[[1]][[2]], stuff[[1]][[3]], stuff[[4]], stuff[[2]], stuff[[3]])
   })
-  
-  # ── Tables ─────────────────────────────────────────────────────────────────
+
+  observeEvent(input$findTarget, {
+    targetT <- as.numeric(input$targetTrough)
+    if(!is.null(PKprof$p) && !is.na(targetT)) {
+      tabdose <- as.numeric(input$ud)
+      nDays <- 224 # number of days for 4 intervals of Q8WK, 7*8*4
+      if(is.na(tabdose)) {
+        # solve required dose
+        dpd <- switch(input$ufrq,
+                      Q1WK = 24 * 7 * 1,
+                      Q2WK = 24 * 7 * 2,
+                      Q3WK = 24 * 7 * 3,
+                      Q4WK = 24 * 7 * 4,
+                      Q5WK = 24 * 7 * 5,
+                      Q6WK = 24 * 7 * 6,
+                      Q7WK = 24 * 7 * 7,
+                      Q8WK = 24 * 7 * 8,
+                      24 * 7 * 2 # HERE
+        )
+        dopts <- seq(20)
+        ptus <- vapply(dopts, function(i) getTrough(PKprof, i, dpd, nDays), numeric(2))
+        dopt <- which.min(abs(targetT - ptus[2,]))
+        updateTextInput(getDefaultReactiveDomain(), inputId = "ud", value = dopts[dopt])
+      } else {
+        # solve required frequency
+        ptus <- vapply(1:8, function(i) getTrough(PKprof, tabdose, 24*7*i, nDays), numeric(2))
+        dopt <- which.min(abs(targetT - ptus[2,]))
+        dlab <- sprintf('Q%sWK', dopt)
+        updateSelectInput(getDefaultReactiveDomain(), inputId = "ufrq", selected = dlab)
+      }
+    }
+  })
+
+  makePlots <- function(schedule1, schedule2, schedule3, concdat, tdrupper, tdrlower) {
+    cols <- c("Individual" = "blue", 
+              "Population" = "darkgoldenrod", 
+              "Simulated" = "darkgray",
+              " Observed Drug Level" = "red")
+
+    p1 <- bldplot(schedule1, 'Dosing 1', tdrupper, tdrlower) +
+      geom_point(data=concdat, aes(x=yt/(24*7),y=y, color=colour), size = 3) +  # HERE rescale time here x=yt/(24*7) <- x=yt
+      scale_colour_manual(
+        values = cols,
+        guide = guide_legend(
+          override.aes = list(linetype = c(rep("solid", 3), "blank"), shape = c(rep(NA, 3), 16))
+        )
+      ) +
+      theme(plot.margin = ggplot2::margin(t=4,r=1,b=1,l=1, "lines")) +
+      theme(legend.direction = "horizontal") +
+      theme(legend.position = c(0.5, 1.2)) +
+      labs(color= "")
+
+    if(is.null(schedule2)) {
+      p2 <- ggplot() + theme_void()
+    } else {
+      p2 <- bldplot(schedule2, 'Dosing 2', tdrupper, tdrlower) +
+        scale_colour_manual(values = cols[1:3]) + theme(legend.position = "none")
+    }
+    if(is.null(schedule3)) {
+      p3 <- ggplot() + theme_void()
+    } else {
+      p3 <- bldplot(schedule3, 'Dosing 3', tdrupper, tdrlower) +
+        scale_colour_manual(values = cols[1:3]) + theme(legend.position = "none")
+    }
+    v$plot1 <- p1 + labs(title = 'dose schedule 1')
+    v$plot2 <- p2 + labs(title = 'dose schedule 2')
+    v$plot3 <- p3 + labs(title = 'dose schedule 3')
+  }
+
+  # user uploads CSV file
+  observeEvent(v$dat, {
+    if(!is.null(v$dat)) {
+      ldat <- arrange_data(v$dat)
+      # use `ldat` to update input form?
+      usrwt <- as.numeric(ldat$covariates$wt)
+      usralb <- as.numeric(ldat$covariates$alb)
+      usrada <- as.numeric(ldat$covariates$ada)
+      if(!is.null(usrwt)) updateTextInput(inputId='wt', value=ldat$covariates$wt)
+      if(!is.null(usralb)) updateTextInput(inputId='alb', value=ldat$covariates$alb)
+      if(!is.null(usrada)) updateTextInput(inputId='ada', value=ldat$covariates$ada)
+      ldat$covariates <- NULL
+      myparams <- c(ldat, drug=input$drug, wt=usrwt, alb=usralb, ada=usrada)
+      v$params <- myparams
+      stuff <- do.call(setupModel, myparams)
+      v$sched <- list(stuff[[1]][[1]])
+      PKprof$Omega <- stuff[[5]]$Omega
+      PKprof$p <- stuff[[5]]$p
+      PKprof$wt <- stuff[[5]]$wt
+      makePlots(stuff[[1]][[1]], NULL, NULL, stuff[[4]], stuff[[2]], stuff[[3]])
+    }
+  })
+
+  output$responseplot <- renderPlot(height = 600,{
+    if(!is.null(v$plot1) && !is.null(v$plot2) && !is.null(v$plot3)) {
+      grid.arrange(v$plot1, v$plot2, v$plot3, heights=c(5.5,4,4))
+    } else {
+      NULL
+    }
+  })
+
   tableInput <- function() {
-    if (is.null(v$params)) return(NULL)
-    i      <- v$params[["in_infusmat1"]]
-    c      <- v$params[["in_concmat"]]
-    myrate <- round(as.numeric(i[, 1]) / as.numeric(i[, "duration"]), 2)
-    i.s    <- data.frame(Time = as.numeric(i[, 'time']) / 3600, DV = NA, AMT = i[, 1],
-                         MDV = 1, EVID = 1, Rate = myrate, Duration = i[, "duration"], SCR = NA)
-    if (isTRUE(v$params[["has_conc"]])) {
-      c.s   <- data.frame(Time = as.numeric(c[, 'time']) / 3600, DV = c[, 'dose'], AMT = NA,
-                          MDV = 0, EVID = 0, Rate = NA, Duration = NA, SCR = NA)
-      t.out <- rbind(i.s, c.s)
-    } else {
-      t.out <- i.s
+    if(is.null(v$params)) return(NULL)
+
+    i <- v$params[['infList']][[1]]
+    c <- v$params[['conList']][[1]]
+    w <- 1 # multiply by "weight" or not?
+    c.s <- data.frame(Time = as.numeric(c[,'time']), Conc = c[,1], Amt = NA, Rate = NA, Duration = NA)
+    # Amt = Rate * Duration -- is this correct?
+    myrate <- as.numeric(i[,1]) / as.numeric(i[,3])
+    i.s <- data.frame(Time = as.numeric(i[,'time']), Conc = NA, Amt = i[,1] * w, Rate = myrate, Duration = i[,3])
+    t.out <- rbind(i.s,c.s)
+    zero.amt <- which(!is.na(t.out[,'Amt']) & t.out[,'Amt']==0)
+    if(length(zero.amt)) {
+      t.out <- t.out[-zero.amt,]
     }
-    t.out <- t.out[!(!is.na(t.out$AMT) & t.out$AMT == 0), ]
-    t.out <- t.out[order(t.out$Time), ]
-    
-    scr_vals  <- round(v$params$scr_vals, 2)
-    scr_times <- v$params$scr_times / 3600
-    t.out[which(t.out$Time == min(t.out$Time)), "SCR"] <- scr_vals[1]
-    
-    if (length(scr_times) > 1) {
-      scr.s  <- data.frame(Time = scr_times[2:length(scr_times)], DV = NA, AMT = NA,
-                           MDV = 0, EVID = 0, Rate = NA, Duration = NA,
-                           SCR = scr_vals[2:length(scr_vals)])
-      t.out1 <- rbind(t.out, scr.s)
-    } else {
-      t.out1 <- t.out
-    }
-    t.out1 <- t.out1[order(t.out1$Time), ]
-    t.out1$Time <- round(t.out1$Time - min(t.out$Time), 2)
-    
-    dups <- as.numeric(names(which(table(t.out1$Time) > 1)))
-    for (tt in dups) {
-      idx <- which(t.out1$Time == tt)
-      t.out1[idx[1], "DV"]  <- t.out1[idx, "DV"][!is.na(t.out1[idx, "DV"])][1]
-      t.out1[idx[1], "SCR"] <- t.out1[idx, "SCR"][!is.na(t.out1[idx, "SCR"])][1]
-      t.out1 <- t.out1[-idx[-1], ]
-    }
-    t.out1$bsa <- v$params$bsa
-    t.out1$Sex <- v$params$pt_gender
-    t.out1 %>%
-      filter(!is.na(Time)) %>%
-      rename(`BSA (m²)` = bsa, `SCR (mg/dL)` = SCR) %>%
-      fill(`SCR (mg/dL)`, .direction = "down")
+    t.out <- t.out[order(t.out[,'Time']),]
+    t.out[,'Time'] <- (t.out[,'Time'] - min(t.out[,'Time']))
+    t.out$weight <- v$params$wt
+    t.out$alb <- v$params$alb
+    t.out$ada <- v$params$ada
+    t.out
   }
-  
-  table2Input <- function() {
-    if (is.null(v$sched[[2]])) return(NULL)
-    d   <- v$sched[[2]]
-    dat <- d %>%
-      filter(time %in% seq(0, 600, by = 6)) %>%
-      dplyr::select(time, bsa, SCR_mmol, pt_gender, Conc, tag) %>%
-      mutate(pt_gender = ifelse(pt_gender %in% c(0, "0"), "Male",
-                                ifelse(pt_gender %in% c(1, "1"), "Female", as.character(pt_gender))),
-             Conc     = round(Conc, 2),
-             SCR_mmol = round(SCR_mmol / 88.4, 2)) %>%
-      rename(`BSA (m²)` = bsa, `SCR (mg/dL)` = SCR_mmol,
-             `Concentration (mg/L)` = Conc, Sex = pt_gender, `Time (hrs)` = time)
-    dat %>% pivot_wider(
-      id_cols    = c(`Time (hrs)`, `BSA (m²)`, `SCR (mg/dL)`, Sex),
-      names_from = tag, values_from = `Concentration (mg/L)`
-    ) %>% 
-    relocate(`Lower 95% population probability: Blackman et al.`,
-             .before = `Upper 95% population probability: Blackman et al.`)
+
+  output$profile1 <- DT::renderDT({
+    tableInput()
+  })
+
+  output$peaktroughtable <- renderTable({
+    n_ds <- length(v$sched)
+    if(is.null(v$sched)) {
+      pt_trgh <- matrix(NA, 3, 3)
+      dose_plan <- c(5, 7.5, 10)
+      n_ds <- 3
+    } else {
+      tp <- c(2, 6, 14) * 7 * 24
+      sloops <- seq(min(3, n_ds))
+      if(n_ds == 1) sloops <- c(1,1)
+      pt_trgh <- t(vapply(v$sched[sloops], function(i) {
+        i <- i[i$id == 'Individual',]
+        i[i[,'t'] %in% tp, 'concentration']
+      }, numeric(3)))
+      dose_plan <- vapply(v$params[['infList']], function(i) i$dose[1], numeric(1))
+    }
+    colnames(pt_trgh) <- c('Week 2', 'Week 6', 'Week 14')
+    # d <- sprintf('%s mg/kg', dose_plan)
+    d <- paste0('Schedule ', seq(nrow(pt_trgh)))
+    cbind(data.frame(Dosage = d), pt_trgh)[seq(n_ds),]
+  })
+
+  getTrough <- function(pk, d, f, nDays) {
+    day10 <- nDays + 7
+    inf.st.time <- seq(0, nDays*24, by = f)
+    inf.e.time <- inf.st.time + 2  # HERE infusion duration 2 hours??
+    tv <- seq(1, day10*24, by = 1) # HERE LC <- by = 48
+    response20 <- getPatDat(clvec=pk$p[1],v1vec=pk$p[2],qvec=pk$p[3],v2vec=pk$p[4],
+                            usrendt=day10*24, usrbdose=NULL, timevec=tv,
+                            usrbt=NULL, usrwt=pk$wt,
+                            usriet=inf.e.time, usrist=inf.st.time,
+                            usridose=rep(d, length(inf.st.time)), Omega=pk$Omega)
+    ss_start <- 24 * 7 * 8 * 3 # HERE LC   24 * 7 * 8 * 3: number of hours for 3 intervals of Q8WK
+    getConcRange(response20, (ss_start + 1), (ss_start + f) ) # HERE LC: 1 dosing time interval after 3 of Q8WK (i.e., 168 days after)
   }
-  
-  output$profile1 <- DT::renderDT({ tableInput() })
-  output$profile2 <- DT::renderDT({ table2Input() })
-  
+
+  output$utable <- renderTable({
+    if(is.null(PKprof$p)) {
+      ptu <- rep(NA, 2)
+    } else {
+      tabdose <- as.numeric(input$ud)
+      targetT <- as.numeric(input$targetTrough)
+      if(!is.na(tabdose) && tabdose < 0) {
+        tabdose <- 10
+        updateTextInput(getDefaultReactiveDomain(), inputId = "ud", value=tabdose)
+      }
+      dpd <- switch(input$ufrq,
+                    Q1WK = 24 * 7 * 1,
+                    Q2WK = 24 * 7 * 2,
+                    Q3WK = 24 * 7 * 3,
+                    Q4WK = 24 * 7 * 4,
+                    Q5WK = 24 * 7 * 5,
+                    Q6WK = 24 * 7 * 6,
+                    Q7WK = 24 * 7 * 7,
+                    Q8WK = 24 * 7 * 8,
+                    24 * 7 * 2 # HERE
+      )
+      nDays <- 224 # HERE LC number of days for 4 intervals of Q8WK
+      ptu <- getTrough(PKprof, tabdose, dpd, nDays)
+    }
+    d <- c("Trough (mcg/mL)") #  HERE LC from d <- c("Peak (mcg/mL)", "Trough (mcg/mL)")
+    udf <- data.frame(Col1 = d, Col2 = round(ptu[2], 2)) #  HERE LC from Col2 = round(ptu, 2)
+    names(udf)<- c(" "," ")
+    udf
+  })
+
+  output$downloadPlot <- downloadHandler(
+    filename = function() { sprintf('TDM_plot_%s.pdf', Sys.Date()) },
+    content = function(file, width = 8, height = 8) {
+      pdf(file, width = width, height = height, onefile = TRUE)
+      grid.arrange(v$plot1, v$plot2, v$plot3, heights = c(5, 4, 4))
+      dev.off()
+  })
+
+  output$downloadTable <- downloadHandler(
+    filename = function() { sprintf('TDM_profile_%s.csv', Sys.Date()) },
+    content = function(file) {
+      write.csv(tableInput(), file, row.names = FALSE)
+  })
+
   output$downloadTable1 <- downloadHandler(
-    filename = function() sprintf('TDM_profile_%s.csv',     Sys.Date()),
-    content  = function(file) write.csv(tableInput(),  file, row.names = FALSE))
-  output$downloadTable2 <- downloadHandler(
-    filename = function() sprintf('TDM_predictions_%s.csv', Sys.Date()),
-    content  = function(file) write.csv(table2Input(), file, row.names = FALSE))
+    filename = function() { sprintf('TDM_profile_%s.csv', Sys.Date()) },
+    content = function(file) {
+      write.csv(tableInput(), file, row.names = FALSE)
+  })
+
+  output$imgdat <- renderUI({
+    tags$img(src = "https://raw.githubusercontent.com/michaelleewilliams/michaelleewilliams.github.io/master/pictures/datex.png",height="50%", width="50%", align="center")
+  })
+
+  output$imgscn <- renderUI({
+    tags$img(src = "https://raw.githubusercontent.com/michaelleewilliams/michaelleewilliams.github.io/master/pictures/scn.png",height="100%", width="100%", align="center")
+  })
 }
 
 shinyApp(ui, server)
